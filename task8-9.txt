@@ -1,0 +1,154 @@
+Задание 8.
+Создать пользовательскую функцию.
+Задание 9.
+Создать триггер.
+
+--При добавлении новости или книги автоматически создавать чат обсуждения
+
+CREATE OR REPLACE FUNCTION create_chat_on_create_entity_trigger()
+RETURNS TRIGGER AS
+$$
+	DECLARE 
+		new_chat_title VARCHAR(128);
+		new_chat_id INTEGER;
+	
+	BEGIN
+        IF TG_TABLE_NAME = 'books'
+        THEN new_chat_title := 'Впечатления читателей от книги '|| NEW.title;
+        ELSE new_chat_title := 'Обсуждение новости  '|| NEW.title;
+		END IF;
+        INSERT INTO chats ("title", "create_date") VALUES (new_chat_title, (select current_date));
+        new_chat_id := (SELECT id FROM CHATS WHERE title = new_chat_title ORDER BY id DESC LIMIT 1);
+        NEW.chat_id = new_chat_id;
+        RETURN NEW;
+	END
+$$
+LANGUAGE PLPGSQL;
+
+CREATE TRIGGER create_chat_on_create_book BEFORE INSERT ON books
+	FOR EACH ROW
+	EXECUTE FUNCTION create_chat_on_create_entity_trigger();
+
+CREATE TRIGGER create_chat_on_create_news BEFORE INSERT ON news
+	FOR EACH ROW
+	EXECUTE FUNCTION create_chat_on_create_entity_trigger();
+
+--При удалении новости или книги автоматически удалять чат обсуждения
+
+CREATE OR REPLACE FUNCTION delete_chat_on_delete_entity_trigger()
+RETURNS TRIGGER AS
+$$
+	BEGIN
+        DELETE FROM chats WHERE id = OLD.chat_id;
+        RETURN OLD;
+	END
+$$
+LANGUAGE PLPGSQL;
+
+CREATE TRIGGER delete_chat_on_delete_book AFTER DELETE ON books
+	FOR EACH ROW
+	EXECUTE FUNCTION delete_chat_on_delete_entity_trigger();
+
+CREATE TRIGGER delete_chat_on_delete_news AFTER DELETE ON news
+	FOR EACH ROW
+	EXECUTE FUNCTION delete_chat_on_delete_entity_trigger();
+
+--При удалении пользователя или автора его контакты удаляются
+
+CREATE OR REPLACE FUNCTION delete_contacts_on_delete_entity_trigger()
+RETURNS TRIGGER AS
+$$
+	BEGIN
+        DELETE FROM contacts WHERE id = OLD.contacts_id;
+        RETURN OLD;
+	END
+$$
+LANGUAGE PLPGSQL;
+
+CREATE TRIGGER delete_contacts_on_delete_author AFTER DELETE ON authors
+	FOR EACH ROW
+	EXECUTE FUNCTION delete_contacts_on_delete_entity_trigger();
+
+CREATE TRIGGER delete_contacts_on_delete_user AFTER DELETE ON users
+	FOR EACH ROW
+	EXECUTE FUNCTION delete_contacts_on_delete_entity_trigger();
+
+-- При удалении автора удаляются его псевдонимы и биография
+
+CREATE OR REPLACE FUNCTION delete_pseudonyms_biography_on_delete_autor_trigger()
+RETURNS TRIGGER AS
+$$
+	BEGIN
+        DELETE FROM pseudonyms WHERE author_id = OLD.id;
+        DELETE FROM files WHERE id = OLD.biography_file_id;
+        RETURN OLD;
+	END
+$$
+LANGUAGE PLPGSQL;
+
+CREATE TRIGGER delete_pseudonyms_biography_on_delete_autor AFTER DELETE ON authors
+	FOR EACH ROW
+	EXECUTE FUNCTION delete_pseudonyms_biography_on_delete_autor_trigger();
+
+-- При удалении книги удаляются файлы содержания и аннотации.
+
+CREATE OR REPLACE FUNCTION delete_annotation_content_on_delete_book_trigger()
+RETURNS TRIGGER AS
+$$
+	BEGIN
+        DELETE FROM files WHERE id = OLD.annotation_file_id;
+        DELETE FROM files WHERE id = OLD.content_file_id;
+        RETURN OLD;
+	END
+$$
+LANGUAGE PLPGSQL;
+
+CREATE TRIGGER delete_annotation_content_on_delete_book AFTER DELETE ON books
+	FOR EACH ROW
+	EXECUTE FUNCTION delete_annotation_content_on_delete_book_trigger();
+
+-- При размещении новости сообщение уходит в чат новостей
+
+CREATE OR REPLACE FUNCTION create_message_on_create_news_trigger()
+RETURNS TRIGGER AS
+$$
+    DECLARE 
+        chat_id INTEGER;
+        admin_id INTEGER;
+	BEGIN
+        chat_id := (SELECT id FROM chats WHERE title = 'Новости портала');
+        admin_id := (SELECT id FROM users WHERE login = 'administrator');
+        INSERT INTO messages (author_id, create_date, chat_id, body)
+            VALUES (admin_id, (select current_date), chat_id, NEW.title);
+        RETURN NEW;
+	END
+$$
+LANGUAGE PLPGSQL;
+
+CREATE TRIGGER create_message_on_create_news BEFORE INSERT ON news
+	FOR EACH ROW
+	EXECUTE FUNCTION create_message_on_create_news_trigger();
+
+-- При добавлении книги сообщение уходит в чат книжных новинок
+
+CREATE OR REPLACE FUNCTION create_message_on_create_book_trigger()
+RETURNS TRIGGER AS
+$$
+    DECLARE 
+        chat_id INTEGER;
+        admin_id INTEGER;
+        text VARCHAR(255);
+	BEGIN
+        chat_id := (SELECT id FROM chats WHERE title = 'Новые книги в нашей библиотеке');
+        admin_id := (SELECT id FROM users WHERE login = 'administrator');
+        text := 'Добавлена новая книга ' || NEW.title;
+        INSERT INTO messages (author_id, create_date, chat_id, body)
+            VALUES (admin_id, (select current_date), chat_id, text);
+        RETURN NEW;
+	END
+$$
+LANGUAGE PLPGSQL;
+
+CREATE TRIGGER create_message_on_create_book BEFORE INSERT ON books
+	FOR EACH ROW
+	EXECUTE FUNCTION create_message_on_create_book_trigger();

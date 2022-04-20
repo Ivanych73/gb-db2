@@ -1,0 +1,52 @@
+Задание 5.
+Создать два сложных (многотабличных) запроса с использованием подзапросов.
+
+-- Задача - найти автора, книга которого является наиболее обсуждаемой
+-- то есть количество сообщений в чате обсуждения книги является наибольшим
+-- в будущем можно будет добавить выборку по времени
+
+with most_discussed_book as
+(
+	select id, title from books where chat_id = (
+	select chat_id 
+		from messages 
+		where chat_id IN (select chat_id from books)
+		group by chat_id 
+		order by count(id) desc limit 1
+	)
+)
+select 
+	first_name, 
+	last_name,
+	(select title from most_discussed_book) as book_title
+	from authors where id = (
+	select author_id from authors_books where book_id = (
+		select id from most_discussed_book
+	)
+);
+
+-- Задача - найти и вывести среднюю оценку книг конкретного автора
+-- и названия книг этого автора, у которых самый высокий рейтинг
+-- может пригодиться для рекомендаций читателям
+
+with 
+books_by_author as 
+(
+	select book_id from authors_books where author_id = 33
+),
+average_rating_by_author as
+(
+	select round(avg(average_rating)::numeric, 2) as average_rating_value from books
+	where id in (select book_id from books_by_author)
+)
+select title as best_book_title,
+average_rating as best_book_rating,
+(select average_rating_value from average_rating_by_author)
+from books 
+where average_rating = (
+	select max(average_rating) 
+	from books 
+	where id in (select book_id from books_by_author)
+	)
+and id in (select book_id from books_by_author)
+;

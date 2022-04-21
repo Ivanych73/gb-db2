@@ -1,0 +1,48 @@
+﻿Задание 6.
+Создать два сложных запроса с использованием объединения JOIN и без использования подзапросов.
+
+-- выбрать все книги указанного автора в указанном жанре
+-- вывести имя-фамилию автора, название книги и жанр
+
+select books.title as book_title,
+authors.first_name,
+authors.last_name,
+genres.title as genre
+from authors_books
+join books on
+authors_books.book_id = books.id
+join authors on
+authors_books.author_id = authors.id
+join genres on
+genres.id = books.genre_id
+where author_id = 33
+and (books.genre_id = 15)
+;
+
+-- выбрать пользователей, загрузивших больше всего книг в указанном жанре
+-- например чтобы как-то поощрить их затем
+-- вывести логин пользователя, жанр и количество загруженных книг
+
+with books_by_users as
+(
+	select count(added_by_id) as books_uploaded,
+	users.login,
+	genres.title as genre
+	from books
+	join users on
+		added_by_id = users.id
+	join genres on
+		genre_id = genres.id
+	where genre_id = 18
+	group by users.login, genres.title
+	order by books_uploaded desc
+),
+max_books_uploaded as
+(
+	select max(books_uploaded)
+	from books_by_users
+)
+select * from books_by_users
+join max_books_uploaded
+on books_uploaded = max_books_uploaded.max
+;

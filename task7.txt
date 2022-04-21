@@ -1,0 +1,48 @@
+Задание 7.
+Создать два представления, в основе которых лежат сложные запросы.
+
+-- Это представление простенькое, но, возможно, будет часто нужным.
+-- Использую, как вспомогательное.
+
+create view book_chats as select chat_id from books;
+
+-- Задача - найти жанр книг, который больше всего обсуждают.
+
+create view most_discussed_genre as
+(
+	select count(messages.id),
+	genres.title
+	from messages
+	join books on
+	messages.chat_id = books.chat_id
+	join genres on
+	books.genre_id = genres.id
+	where messages.chat_id in (select * from book_chats)
+	group by genres.title
+	order by count desc 
+	limit 1
+);
+
+-- 30 самых рекомендуемых книжных новинок месяца
+-- выводим название книги, автора и жанр
+-- Такое представление потом можно дополнительно фильтровать по авторам-жанрам
+-- его можно легко модифицировать, на другие интервалы времени или количество выводимых книг
+
+create view most_rated_books as 
+(
+	select books.title,
+	books.average_rating as rating,
+	authors.first_name,
+	authors.last_name,
+	genres.title as genre
+	from books
+	join authors_books
+		on books.id = authors_books.book_id
+	join authors
+		on authors.id = authors_books.author_id
+	join genres
+		on genres.id = books.genre_id
+	where books.add_to_library_date >= now() - INTERVAL '1 month'
+	order by average_rating desc
+	limit 30
+);

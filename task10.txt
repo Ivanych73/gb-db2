@@ -1,0 +1,116 @@
+Задание 10.
+Для одного из запросов, созданных в пункте 6, провести оптимизацию. В качестве отчета приложить планы выполнения запроса, ваш анализ и показать действия, которые улучшили эффективность запроса.
+
+Запрос 
+
+explain analyze with books_by_users as
+(
+	select count(added_by_id) as books_uploaded,
+	users.login,
+	genres.title as genre
+	from books
+	join users on
+		added_by_id = users.id
+	join genres on
+		genre_id = genres.id
+	where genre_id = 18
+	group by users.login, genres.title
+	order by books_uploaded desc
+),
+max_books_uploaded as
+(
+	select max(books_uploaded)
+	from books_by_users
+)
+select * from books_by_users
+join max_books_uploaded
+on books_uploaded = max_books_uploaded.max
+;
+
+План выполнения
+
+ QUERY PLAN
+------------------------------------------------------------------------------------------------------------------------------------------------
+ Hash Join  (cost=29.35..30.11 rows=1 width=230) (actual time=0.184..0.189 rows=2 loops=1)
+   Hash Cond: (books_by_users.books_uploaded = (max(books_by_users_1.books_uploaded)))
+   CTE books_by_users
+     ->  Sort  (cost=28.49..28.57 rows=33 width=160) (actual time=0.162..0.164 rows=25 loops=1)
+           Sort Key: (count(books.added_by_id)) DESC
+           Sort Method: quicksort  Memory: 26kB
+           ->  HashAggregate  (cost=27.33..27.66 rows=33 width=160) (actual time=0.136..0.140 rows=25 loops=1)
+                 Group Key: users.login, genres.title
+                 Batches: 1  Memory Usage: 24kB
+                 ->  Nested Loop  (cost=3.40..27.08 rows=33 width=160) (actual time=0.065..0.122 rows=33 loops=1)
+                       ->  Index Scan using genres_pkey on genres  (cost=0.15..8.17 rows=1 width=150) (actual time=0.003..0.004 rows=1 loops=1)
+                             Index Cond: (id = 18)
+                       ->  Hash Join  (cost=3.25..18.59 rows=33 width=22) (actual time=0.061..0.114 rows=33 loops=1)
+                             Hash Cond: (books.added_by_id = users.id)
+                             ->  Seq Scan on books  (cost=0.00..15.25 rows=33 width=16) (actual time=0.014..0.062 rows=33 loops=1)
+                                   Filter: (genre_id = 18)
+                                   Rows Removed by Filter: 467
+                             ->  Hash  (cost=2.00..2.00 rows=100 width=10) (actual time=0.029..0.029 rows=100 loops=1)
+                                   Buckets: 1024  Batches: 1  Memory Usage: 13kB
+                                   ->  Seq Scan on users  (cost=0.00..2.00 rows=100 width=10) (actual time=0.005..0.012 rows=100 loops=1)
+   ->  CTE Scan on books_by_users  (cost=0.00..0.66 rows=33 width=222) (actual time=0.163..0.165 rows=25 loops=1)
+   ->  Hash  (cost=0.76..0.76 rows=1 width=8) (actual time=0.011..0.011 rows=1 loops=1)
+         Buckets: 1024  Batches: 1  Memory Usage: 9kB
+         ->  Aggregate  (cost=0.74..0.75 rows=1 width=8) (actual time=0.008..0.009 rows=1 loops=1)
+               ->  CTE Scan on books_by_users books_by_users_1  (cost=0.00..0.66 rows=33 width=8) (actual time=0.001..0.005 rows=25 loops=1)
+ Planning Time: 0.748 ms
+ Execution Time: 0.371 ms
+(27 rows)
+
+Анализ
+
+Группировку и сортровку из запроса не убрать, они нужны для целей запроса.
+Видим, что дважды применятся последовательное сканирование - по таблице users по полю login.
+И по таблице books по полю genre_id - это внешний ключ.
+Для оптимизации запроса можно создать индексы по этим полям.
+
+CREATE INDEX books_genre_id_idx ON books (genre_id);
+CREATE INDEX users_login_idx ON users (login);
+
+После создания индексов новый план выполнения
+
+                                                                         QUERY PLAN
+
+----------------------------------------------------------------------------------------------------------------------------------------------------
+---------
+ Hash Join  (cost=27.91..28.67 rows=1 width=230) (actual time=0.184..0.191 rows=2 loops=1)
+   Hash Cond: (books_by_users.books_uploaded = (max(books_by_users_1.books_uploaded)))
+   CTE books_by_users
+     ->  Sort  (cost=27.06..27.14 rows=33 width=160) (actual time=0.162..0.165 rows=25 loops=1)
+           Sort Key: (count(books.added_by_id)) DESC
+           Sort Method: quicksort  Memory: 26kB
+           ->  HashAggregate  (cost=25.89..26.22 rows=33 width=160) (actual time=0.150..0.155 rows=25 loops=1)
+                 Group Key: users.login, genres.title
+                 Batches: 1  Memory Usage: 24kB
+                 ->  Nested Loop  (cost=7.80..25.65 rows=33 width=160) (actual time=0.107..0.133 rows=33 loops=1)
+                       ->  Index Scan using genres_pkey on genres  (cost=0.15..8.17 rows=1 width=150) (actual time=0.005..0.006 rows=1 loops=1)
+                             Index Cond: (id = 18)
+                       ->  Hash Join  (cost=7.65..17.15 rows=33 width=22) (actual time=0.098..0.120 rows=33 loops=1)
+                             Hash Cond: (books.added_by_id = users.id)
+                             ->  Bitmap Heap Scan on books  (cost=4.40..13.82 rows=33 width=16) (actual time=0.054..0.066 rows=33 loops=1)
+                                   Recheck Cond: (genre_id = 18)
+                                   Heap Blocks: exact=8
+                                   ->  Bitmap Index Scan on books_genre_id_idx  (cost=0.00..4.39 rows=33 width=0) (actual time=0.047..0.047 rows=33
+loops=1)
+                                         Index Cond: (genre_id = 18)
+                             ->  Hash  (cost=2.00..2.00 rows=100 width=10) (actual time=0.034..0.034 rows=100 loops=1)
+                                   Buckets: 1024  Batches: 1  Memory Usage: 13kB
+                                   ->  Seq Scan on users  (cost=0.00..2.00 rows=100 width=10) (actual time=0.007..0.016 rows=100 loops=1)
+   ->  CTE Scan on books_by_users  (cost=0.00..0.66 rows=33 width=222) (actual time=0.163..0.166 rows=25 loops=1)
+   ->  Hash  (cost=0.76..0.76 rows=1 width=8) (actual time=0.012..0.012 rows=1 loops=1)
+         Buckets: 1024  Batches: 1  Memory Usage: 9kB
+         ->  Aggregate  (cost=0.74..0.75 rows=1 width=8) (actual time=0.009..0.009 rows=1 loops=1)
+               ->  CTE Scan on books_by_users books_by_users_1  (cost=0.00..0.66 rows=33 width=8) (actual time=0.000..0.005 rows=25 loops=1)
+ Planning Time: 0.594 ms
+ Execution Time: 0.274 ms
+(29 rows)
+
+Видим, что по users все равно последовательное сканирование, а вот по books уже индексное. Есть прирост в скорости выполнения запроса.
+
+Индекс по полю users.login можно удалить, он особо не помогает, не будем перегружать базу.
+
+library=# drop INDEX users_login_idx;
+DROP INDEX

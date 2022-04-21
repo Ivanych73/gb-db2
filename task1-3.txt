@@ -1,0 +1,245 @@
+Задание 1.
+Проанализировать бизнес-логику приложения и создать структуру базы данных, которая может использоваться для хранения данных этого приложения. В базе данных должно быть минимум десять таблиц. Если таблиц получается более двадцати то рекомендуется ограничиться частью функционала приложения и не превышать это количество. В качестве отчета по этой части проекта необходимо приложить команды создания таблиц.
+Задание 3.
+Создать внешние ключи, если они не были созданы на шаге 1 в командах создания таблиц. В качестве отчета приложить команды создания внешних ключей. 
+
+-- Разрабатываем структуру базы данных для ресурса онлайн-библиотеки
+
+-- Для хранения ISBN книги нужно будет раcширение. Просто чтобы такой тип данных как ISBN присутствовал
+CREATE EXTENSION isn;
+
+-- Непосредственно в бд хранить тексты книг, аннотации и биографии авторов не будем
+-- У нас будет отдельная таблица, в которой будет указан путь к файлу и тип файла
+-- Поскольку типов файлов у нас пока всего три, городить под них отдельную таблицу не будем
+-- сделаем просто новый ENUM тип данных 
+CREATE TYPE file_type AS ENUM ('annotation', 'content', 'biography');
+
+-- Поскольку при создании таблиц сразу объявляем внешние ключи, надо чтобы таблица, на которую идет ссылка
+-- уже была создана. Поэтому порядок создания таблиц именно такой
+
+-- Таблица с жанрами книг. Тут все просто
+CREATE TABLE public.genres
+(
+    id SERIAL PRIMARY KEY,
+    title character varying(64) NOT NULL
+);
+
+-- Таблица с сериями книг. Тут все просто
+CREATE TABLE public.series
+(
+    id SERIAL PRIMARY KEY,
+    title character varying(256) NOT NULL
+);
+
+-- Таблица ссылок на файлы. Содержит путь к файлу, его тип и размер. Про тип см. выше
+CREATE TABLE public.files
+(
+    id SERIAL PRIMARY KEY,
+    file_path character varying(256) NOT NULL,
+    file_type file_type NOT NULL,
+    file_size smallint NOT NULL
+);
+
+-- Контакты могут быть как у пользователей так и у авторов, поэтому таблица одна.
+CREATE TABLE public.contacts
+(
+    id SERIAL PRIMARY KEY,
+    email character varying(64) NOT NULL,
+    phone character varying(13),
+    whatsapp character varying(13),
+    telegram character varying(64),
+    web_site character varying(64)
+);
+
+
+-- Для пользователя храним логин, он же ник, хэш пароля, ссылку на контакты и 
+-- дату регистрации. Так как у нас библиотека, а не соцсеть, вроде этого достаточно
+CREATE TABLE public.users
+(
+    id SERIAL PRIMARY KEY,
+    login character varying(25) NOT NULL,
+    registration_date date NOT NULL,
+    password_hash character varying(128) NOT NULL,
+    contacts_id bigint,
+    CONSTRAINT contacts_id_fk
+        FOREIGN KEY (contacts_id)
+        REFERENCES contacts (id)
+        ON DELETE SET NULL
+);
+
+-- Таблица с авторами. Обязательное поле - имя, прочие поля - фамилия,
+-- ссылка на файл с биографией и ссылка на контакты - необязательные.
+CREATE TABLE public.authors
+(
+    id SERIAL PRIMARY KEY,
+    first_name character varying(25) NOT NULL,
+    last_name character varying(25),
+    biography_file_id bigint,
+    contacts_id bigint,
+    CONSTRAINT contacts_id_fk
+        FOREIGN KEY (contacts_id)
+        REFERENCES contacts (id)
+        ON DELETE SET NULL
+);
+
+-- Таблица с псевдонимами. Тут все просто
+CREATE TABLE public.pseudonyms
+(
+    id SERIAL PRIMARY KEY,
+    pseudonym character varying(25) NOT NULL,
+    author_id bigint NOT NULL,
+    CONSTRAINT author_id_fk 
+        FOREIGN KEY (author_id) 
+        REFERENCES authors (id)
+        ON DELETE CASCADE
+);
+
+-- Концепция чатов подсмотрена в bitrix24. Обсуждение книги - это чат, сообщения в теме на форуме - это чат, 
+-- сообщения от пользователя к пользователю - тоже чат
+CREATE TABLE public.chats
+(
+    id SERIAL PRIMARY KEY,
+    title character varying(128) NOT NULL,
+    create_date date NOT NULL,
+    created_by_id bigint,
+    CONSTRAINT created_by_id_fk
+        FOREIGN KEY (created_by_id)
+        REFERENCES users (id)
+-- При удалении пользователя не надо сразу удалять все чаты, что он создал
+-- Тут тема для развития и обдумывания, какие чаты удаляем, какие - нет
+-- Пока не реализую
+        ON DELETE SET NULL
+);
+
+-- Соответственно сообщения не адресованы кому-то, это сообщения в конкретный чат
+-- То есть поля сообщения, это ссылка на чат, ссылка на автора, дата создания и содержание
+CREATE TABLE public.messages
+(
+    id SERIAL PRIMARY KEY,
+    author_id bigint NOT NULL,
+    create_date date NOT NULL,
+    chat_id bigint NOT NULL,
+    body text NOT NULL,
+    CONSTRAINT author_id_fk
+        FOREIGN KEY (author_id)
+        REFERENCES users(id)
+        ON DELETE CASCADE,    
+    CONSTRAINT chat_id_fk
+        FOREIGN KEY (chat_id)
+        REFERENCES chats(id)
+        ON DELETE CASCADE
+);
+
+-- Таблица для раздела новостей портала. Не книжных новинок, а именно новостей
+-- Предполагается, что таких новостей будет не так уж много, поэтому храним
+-- содержание новости в бд.
+-- При создании новости должна автоматом формироваться ссылка на ее обсуждение
+CREATE TABLE public.news
+(
+    id SERIAL PRIMARY KEY,
+    title character varying(256) NOT NULL,
+    body text NOT NULL,
+    chat_id bigint,
+    CONSTRAINT chat_id_fk
+        FOREIGN KEY (chat_id)
+        REFERENCES chats (id)
+-- Даже если обсуждение новости удалено, сама новость остается
+        ON DELETE SET NULL
+);
+
+-- Книга - основной элемент библиотеки. В таблице с книгами храним следующие данные.
+-- Название, ISBN, дату издания, дату добавления в библиотеку, ссылку на файл с содержанием,
+-- ссылку на файл с аннотацией, ссылку на чат с обсуждением книги, ссылку на жанр книги,
+-- ссылку на серию, среднюю оценку книги, общее количество поставивших оценки и ссылку на пользователя, добавившего книгу.
+-- Данные об авторе намеренно здесь не указываем, так как книги-авторы - связь многие-ко-многим.
+-- У одного автора может быть много книг, у одной книги - несколько авторов.
+-- Поэтому связь книга-автор храним в отдельной таблице связей.
+-- Пользователь может оценить книгу. Храним среднюю оценку и число оценивших
+-- Каждую оценку каждого пользователя хранить смысла нет.
+-- При выставленни оценки пересчитываем новую среднюю - умножаем среднюю на число голосовавших,
+-- прибавляем новую оценку, инкрементируем число голосовавших, делим новую полную оценку на новое число
+-- голосовавших - получаем новую среднюю, обновляем запись
+CREATE TABLE public.books
+(
+    id SERIAL PRIMARY KEY,
+    title character varying(200) NOT NULL,
+    isbn isbn13,
+    publish_date date NOT NULL,
+    annotation_file_id bigint,
+    content_file_id bigint NOT NULL,
+    add_to_library_date date NOT NULL,
+    chat_id bigint NOT NULL,
+    genre_id bigint,
+    added_by_id bigint,
+    average_rating real,
+    votes_count bigint,
+    series_id bigint,
+    CONSTRAINT annotation_file_id_fk
+        FOREIGN KEY (annotation_file_id)
+        REFERENCES files (id)
+-- Аннотация может и отсутствовать
+        ON DELETE SET NULL,
+    CONSTRAINT content_file_id_fk
+        FOREIGN KEY (content_file_id)
+        REFERENCES files (id)
+-- А вот содержание должно быть обязательно
+-- Если нет содержания то нет и книги
+        ON DELETE CASCADE,
+    CONSTRAINT chat_id_fk
+        FOREIGN KEY (chat_id)
+        REFERENCES chats (id)
+-- Если сама книга не удалена, то возможность обсуждения тоже не должна удаляться
+        ON DELETE RESTRICT,
+    CONSTRAINT genre_id_fk
+        FOREIGN KEY (genre_id)
+        REFERENCES genres (id)
+-- Книга может не относиться к конкретному жанру, при удалении жанра книга не удаляется
+        ON DELETE SET NULL,
+    CONSTRAINT series_id_fk
+        FOREIGN KEY (series_id)
+        REFERENCES series (id)
+-- Книга может не относиться к конкретной серии, при удалении серии книга не удаляется
+        ON DELETE SET NULL,
+    CONSTRAINT added_by_id_fk
+        FOREIGN KEY (added_by_id)
+        REFERENCES users (id)
+-- При удалении пользователя, добавившего книгу, она не удаляется
+        ON DELETE SET NULL
+
+-- Та самая таблица связей авторы-книги. Комбинация author_id и book_id должна
+-- быть уникальной
+CREATE TABLE public.authors_books
+(
+    author_id bigint NOT NULL,
+    book_id bigint NOT NULL,
+    PRIMARY KEY (author_id, book_id),
+    CONSTRAINT author_id_fk 
+        FOREIGN KEY (author_id) 
+        REFERENCES authors (id)
+-- Ситуация когда из библиотеки может быть удален Автор, представляется довольно странной
+-- Но допустим, выяснилось, что такой-то автор - просто псведоним уже имющегося автора
+-- Тогда автора удаляем и авторство тоже удаляем
+        ON DELETE CASCADE,
+    CONSTRAINT book_id_fk 
+        FOREIGN KEY (book_id) 
+        REFERENCES books (id)
+-- Если же удалена книга, то естественно удаляем и информацию об авторстве.
+        ON DELETE CASCADE
+);
+
+-- Таблица учета проголосовавших по книге. Каждый зарегистрированный пользователь может
+-- проголосовать за книгу только один раз. Нужна чтобы исключить накрутки
+CREATE TABLE public.books_voters
+(
+    book_id bigint NOT NULL,
+    voter_id bigint NOT NULL,
+    PRIMARY KEY (voter_id, book_id),
+    CONSTRAINT voter_id_fk 
+        FOREIGN KEY (voter_id) 
+        REFERENCES users (id)
+        ON DELETE CASCADE,
+    CONSTRAINT book_id_fk 
+        FOREIGN KEY (book_id) 
+        REFERENCES books (id)
+        ON DELETE CASCADE
+);
